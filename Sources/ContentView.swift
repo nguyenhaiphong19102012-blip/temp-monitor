@@ -2,14 +2,29 @@ import SwiftUI
 import AVKit
 import AVFoundation
 
+struct PiPHostView: UIViewRepresentable {
+    let displayLayer: AVSampleBufferDisplayLayer
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView(frame: CGRect(x: 0, y: 0, width: 320, height: 110))
+        displayLayer.frame = view.bounds
+        view.layer.addSublayer(displayLayer)
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        displayLayer.frame = uiView.bounds
+    }
+}
+
 class ThermalPiPManager: NSObject, ObservableObject, AVPictureInPictureControllerDelegate {
-    @Published var stateText: String = "MÁT (Bình thường)"
-    @Published var detailText: String = "Hiệu năng tối đa • ~32-36°C"
+    @Published var stateText: String = "MÁT • ỔN ĐỊNH"
+    @Published var detailText: String = "Không giảm xung (~32–36°C)"
     @Published var statusColor: UIColor = .systemGreen
     @Published var isPiPActive: Bool = false
 
+    let displayLayer = AVSampleBufferDisplayLayer()
     private var pipController: AVPictureInPictureController?
-    private var displayLayer = AVSampleBufferDisplayLayer()
     private var timer: Timer?
 
     override init() {
@@ -17,7 +32,7 @@ class ThermalPiPManager: NSObject, ObservableObject, AVPictureInPictureControlle
         setupAudioSession()
         setupPiP()
         updateThermalState()
-        timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { [weak self] _ in
             self?.updateThermalState()
         }
     }
@@ -29,7 +44,6 @@ class ThermalPiPManager: NSObject, ObservableObject, AVPictureInPictureControlle
     }
 
     private func setupPiP() {
-        displayLayer.frame = CGRect(x: 0, y: 0, width: 320, height: 110)
         displayLayer.videoGravity = .resizeAspect
         let contentSource = AVPictureInPictureController.ContentSource(
             sampleBufferDisplayLayer: displayLayer,
@@ -37,15 +51,18 @@ class ThermalPiPManager: NSObject, ObservableObject, AVPictureInPictureControlle
         )
         pipController = AVPictureInPictureController(contentSource: contentSource)
         pipController?.delegate = self
+        pipController?.canStartPictureInPictureAutomaticallyFromInline = true
     }
 
     func togglePiP() {
         guard let pip = pipController else { return }
+        renderFrame()
         if pip.isPictureInPictureActive {
             pip.stopPictureInPicture()
         } else {
-            renderFrame()
-            pip.startPictureInPicture()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                pip.startPictureInPicture()
+            }
         }
     }
 
@@ -106,7 +123,9 @@ class ThermalPiPManager: NSObject, ObservableObject, AVPictureInPictureControlle
         }
 
         if let sampleBuffer = image.toSampleBuffer() {
-            displayLayer.flush()
+            if displayLayer.status == .failed {
+                displayLayer.flush()
+            }
             displayLayer.enqueue(sampleBuffer)
         }
     }
@@ -168,22 +187,13 @@ struct ContentView: View {
     @StateObject private var manager = ThermalPiPManager()
 
     var body: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: 20) {
             Text("Giám Sát Nhiệt Độ")
                 .font(.title.bold())
 
-            VStack(spacing: 10) {
-                Text(manager.stateText)
-                    .font(.title2.bold())
-                    .foregroundColor(Color(manager.statusColor))
-                Text(manager.detailText)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-            }
-            .padding(24)
-            .frame(maxWidth: .infinity)
-            .background(Color(manager.statusColor).opacity(0.15))
-            .cornerRadius(16)
+            PiPHostView(displayLayer: manager.displayLayer)
+                .frame(width: 320, height: 110)
+                .cornerRadius(16)
 
             Button(action: { manager.togglePiP() }) {
                 Label(manager.isPiPActive ? "Tắt Cửa Sổ Nổi" : "Bật Cửa Sổ Nổi Khi Chơi Game",
@@ -196,7 +206,7 @@ struct ContentView: View {
                     .cornerRadius(12)
             }
 
-            Text("Bấm nút trên để hiện khung nổi, sau đó vuốt thoát ra màn hình chính hoặc vào game để theo dõi liên tục.")
+            Text("Bấm nút trên rồi vuốt thoát ra màn hình chính, khung nhiệt độ sẽ tự động thu nhỏ nổi trên mọi ứng dụng.")
                 .font(.footnote)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
